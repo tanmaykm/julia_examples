@@ -14,6 +14,8 @@ const id_to_doc_location    = string(fs_pfx, "id_to_doc.jser")
 const didx_location         = string(fs_pfx, "didx.jser")
 const docs_location         = string(fs_pfx, "docs")
 
+const ndocs_per_idx_part    = 100
+
 const doc_to_id = Dict{String, Int}()
 load_doc_to_id() = merge!(doc_to_id, deserialize(open(doc_to_id_location)))
 
@@ -36,7 +38,15 @@ function as_corpus(pathlist::Array)
 end
 
 function as_preprocessed(entity)
+    remove_corrupt_utf8!(entity)
+    remove_punctuation!(entity)
+    remove_numbers!(entity)
     remove_case!(entity)
+    remove_articles!(entity)
+    remove_indefinite_articles!(entity)
+    remove_definite_articles!(entity)
+    remove_prepositions!(entity)
+    remove_pronouns!(entity)
     remove_stop_words!(entity)
     entity
 end
@@ -124,7 +134,7 @@ function create_index()
     docs_loc = as_openable(docs_location)
     part_idx_loc = as_openable(part_idx_location)
 
-    blks = Block(docs_loc, true, 10)
+    blks = Block(docs_loc, true, ndocs_per_idx_part)
     blks |> as_corpus |> as_preprocessed |> as_inverted_index |> as_serialized_part_idx
     pmap(idx->idx, blks)
 
