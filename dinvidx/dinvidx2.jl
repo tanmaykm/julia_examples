@@ -15,10 +15,9 @@ const fs_pfx = ""
 const part_idx_location     = joinpath(fs_pfx, "part_idx")
 const doc_to_id_location    = joinpath(fs_pfx, "doc_to_id.jser")
 const id_to_doc_location    = joinpath(fs_pfx, "id_to_doc.jser")
-const didx_location         = joinpath(fs_pfx, "didx.jser")
 const docs_location         = joinpath(fs_pfx, "docs")
 
-const ndocs_per_idx_part    = 50
+const ndocs_per_idx_part    = 10
 
 
 ##
@@ -104,7 +103,6 @@ end
 
 # cache deserialized objs to help the simple search implementation speed up by preventing repeated loading of indices
 const deser_cache = Dict()
-as_deserialized(a::Array) = map(as_deserialized, a)
 as_deserialized(f::File) = as_deserialized(f.path)
 function as_deserialized(path::Union(String,HdfsURL))
     haskey(deser_cache, path) && return deser_cache[path]
@@ -120,19 +118,20 @@ function as_deserialized(path::Union(String,HdfsURL))
     obj
 end
 
+function my_files(blk::Block)
+    local_files = {}
+    for b in localpart(blk)
+        append!(local_files, b)
+    end
+    local_files
+end
 
 ##
 # Searching
 ##########################################################
 
-function search_part_idx(a::Array, terms::Array) 
-    results = IntSet()
-    for part_idx in a
-        union!(results, search_part_idx(part_idx, terms))
-    end
-    results
-end
-function search_part_idx(part_idx::Dict, terms::Array)
+function search_part_idx(part_idx_name, terms::Array)
+    part_idx = as_deserialized(part_idx_name)
     results = IntSet()
     for term in terms
         union!(results, get(part_idx, term, []))
@@ -141,36 +140,52 @@ function search_part_idx(part_idx::Dict, terms::Array)
 end
 
 const dist_idx = Block[]
+function master_index() 
+    isempty(dist_idx) && push!(dist_idx, Block(openable(part_idx_location), false, 2))
+    dist_idx[1]
+end
+
 function search_index(terms::String)
     sd = StringDocument(terms)
     as_preprocessed(sd)
-    toks = tokens(sd)
-    toks = filter(tok->!isempty(tok), toks)
-   
-    isempty(dist_idx) && push!(dist_idx, (as_deserialized(openable(didx_location)) |> as_deserialized)) 
-    result_ids = pmapreduce(part_idx->search_part_idx(part_idx, toks), union!, IntSet(), dist_idx[1])
+    terms = tokens(sd)
+    terms = filter(tok->!isempty(tok), terms)
+    m = master_index()
 
-    isempty(id_to_doc) && load_id_to_doc()
-    result_docs = map(id->get(id_to_doc, id, ""), result_ids)
+    result_doc_ids = @parallel union for i in 1:nworkers()
+        files = my_files(m)
+        reduce(union, map(file->search_part_idx(file, terms), files))
+    end
+  
+    # map the document ids to file names 
+    isempty(id_to_doc) && load_id_to_doc()          # load the id-doc mapping dict only once
+    result_docs = map(id->get(id_to_doc, id, ""), result_doc_ids)
     filter(x->!isempty(x), result_docs)
 end
 
 ##
 # Indexing
 #####################################################
+function create_part_index(files)
+    crps = as_corpus(files)
+    crps = as_preprocessed(crps)
+    inv_idx = as_inverted_index(crps)
+    serialized_filename = as_serialized_part_idx(inv_idx)
+    serialized_filename
+end
+
 function create_index()
-    docs_loc = openable(docs_location)
-    part_idx_loc = openable(part_idx_location)
-
-    blks = Block(docs_loc, true, ndocs_per_idx_part)
-    blks |> as_corpus |> as_preprocessed |> as_inverted_index |> as_serialized_part_idx
-    pmap(idx->idx, blks)
-
-    # TODO: squash multiple indices per machine for efficiency
-    # Number of indices to squish would depend on the scale at which we are running this
-
-    didx = Block(part_idx_loc, false, 2)
-    as_serialized(didx, openable(didx_location))
+    blks = Block(openable(docs_location), true, ndocs_per_idx_part)
+    num_parts = @parallel (+) for i in 1:nworkers()
+        file_lists = localpart(blks)
+        np = 0
+        for files in file_lists
+            create_part_index(files)
+            np += 1
+        end
+        np
+    end
+    println("created $num_parts part indices")
 end
 
 
