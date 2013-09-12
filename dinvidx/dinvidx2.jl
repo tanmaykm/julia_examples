@@ -19,17 +19,19 @@ const docs_location         = joinpath(fs_pfx, "docs")
 
 const ndocs_per_idx_part    = 10
 
-
 ##
 # Utility methods
 #########################################################
-const doc_to_id = Dict{String, Int}()
-load_doc_to_id() = merge!(doc_to_id, as_deserialized(openable(doc_to_id_location)))
+const _cache = Dict()
+cache(k, v) = _cache[k] = v
+cache_clear(k) = delete!(_cacle, k)
+cache_clear() = empty!(_cache)
+macro cached_get(k, expr)
+    v = get(_cache, k, nothing)
+    (nothing != v) && return v
+    cache(k, eval(expr))
+end
 
-const id_to_doc = Dict{Int, String}()
-load_id_to_doc() = merge!(id_to_doc, as_deserialized(openable(id_to_doc_location)))
-
-next_idx_id = 0
 
 function as_corpus(pathlist::Array)
     sdlist = {}
@@ -45,7 +47,7 @@ function as_corpus(pathlist::Array)
     Corpus(sdlist)
 end
 
-function as_preprocessed(entity)
+function as_preprocessed(entity::Union(StringDocument,Corpus))
     remove_corrupt_utf8!(entity)
     remove_punctuation!(entity)
     remove_numbers!(entity)
@@ -60,7 +62,8 @@ function as_preprocessed(entity)
 end
 
 function as_inverted_index(crps::Corpus)
-    isempty(doc_to_id) && load_doc_to_id()
+    doc_to_id = @cached_get(doc_to_id_location, :(as_deserialized(openable(doc_to_id_location))))
+
     cdocs = documents(crps)
 
     update_inverse_index!(crps)
@@ -82,7 +85,7 @@ end
 
 openable(path::HdfsURL) = path
 openable(path::File) = path
-openable(path) = beginswith(path, "hdfs") ? HdfsURL(path) : File(path)
+openable(path::String) = beginswith(path, "hdfs") ? HdfsURL(path) : File(path)
 
 as_serialized(obj, f::File) = as_serialized(obj, f.path)
 function as_serialized(obj, path)
@@ -92,20 +95,10 @@ function as_serialized(obj, path)
     path
 end
 
-function as_serialized_part_idx(obj::Dict) 
-    global next_idx_id
-    next_idx_id += 1
-
-    path = joinpath(part_idx_location, string(myid(), '_', next_idx_id, ".jser"))
-
-    as_serialized(obj, openable(path))
-end
 
 # cache deserialized objs to help the simple search implementation speed up by preventing repeated loading of indices
-const deser_cache = Dict()
 as_deserialized(f::File) = as_deserialized(f.path)
 function as_deserialized(path::Union(String,HdfsURL))
-    haskey(deser_cache, path) && return deser_cache[path]
     io = as_io(path)
     if isa(path, HdfsURL)
         iob = IOBuffer(read(io, Array(Uint8, nb_available(io)))) # HDFS does not play nicely with byte size reads
@@ -114,16 +107,7 @@ function as_deserialized(path::Union(String,HdfsURL))
     end
     obj = deserialize(io)
     close(io)
-    deser_cache[path] = obj
     obj
-end
-
-function my_files(blk::Block)
-    local_files = {}
-    for b in localpart(blk)
-        append!(local_files, b)
-    end
-    local_files
 end
 
 ##
@@ -131,7 +115,7 @@ end
 ##########################################################
 
 function search_part_idx(part_idx_name, terms::Array)
-    part_idx = as_deserialized(part_idx_name)
+    part_idx = @cached_get(part_idx_name, :(as_deserialized(part_idx_name)))
     results = IntSet()
     for term in terms
         union!(results, get(part_idx, term, []))
@@ -139,26 +123,23 @@ function search_part_idx(part_idx_name, terms::Array)
     results
 end
 
-const dist_idx = Block[]
-function master_index() 
-    isempty(dist_idx) && push!(dist_idx, Block(openable(part_idx_location), false, 2))
-    dist_idx[1]
-end
-
 function search_index(terms::String)
     sd = StringDocument(terms)
     as_preprocessed(sd)
     terms = tokens(sd)
     terms = filter(tok->!isempty(tok), terms)
-    m = master_index()
+    master_idx = @cached_get(part_idx_location, :(Block(openable(part_idx_location), false, 2)))
 
     result_doc_ids = @parallel union for i in 1:nworkers()
-        files = my_files(m)
-        reduce(union, map(file->search_part_idx(file, terms), files))
+        local_files = {}
+        for b in localpart(master_idx)
+            append!(local_files, b)
+        end
+        reduce(union, map(file->search_part_idx(file, terms), local_files))
     end
   
     # map the document ids to file names 
-    isempty(id_to_doc) && load_id_to_doc()          # load the id-doc mapping dict only once
+    id_to_doc = @cached_get(id_to_doc_location, :(as_deserialized(openable(id_to_doc_location))))
     result_docs = map(id->get(id_to_doc, id, ""), result_doc_ids)
     filter(x->!isempty(x), result_docs)
 end
@@ -166,12 +147,16 @@ end
 ##
 # Indexing
 #####################################################
+next_idx_id = 0
 function create_part_index(files)
     crps = as_corpus(files)
     crps = as_preprocessed(crps)
     inv_idx = as_inverted_index(crps)
-    serialized_filename = as_serialized_part_idx(inv_idx)
-    serialized_filename
+
+    global next_idx_id
+    next_idx_id += 1
+    path = joinpath(part_idx_location, string(myid(), '_', next_idx_id, ".jser"))
+    as_serialized(inv_idx, openable(path))
 end
 
 function create_index()
