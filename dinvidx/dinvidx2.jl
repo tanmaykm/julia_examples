@@ -33,7 +33,7 @@ macro cached_get(k, expr)
 end
 
 
-function as_corpus(pathlist::Array)
+function corpus(pathlist::Array)
     sdlist = {}
     for path in pathlist
         io = open(path)
@@ -47,17 +47,18 @@ function as_corpus(pathlist::Array)
     Corpus(sdlist)
 end
 
-function as_preprocessed(entity::Union(StringDocument,Corpus))
+function preprocess(entity::Union(StringDocument,Corpus))
     remove_corrupt_utf8!(entity)
-    remove_punctuation!(entity)
-    remove_numbers!(entity)
     remove_case!(entity)
-    remove_articles!(entity)
-    remove_indefinite_articles!(entity)
-    remove_definite_articles!(entity)
-    remove_prepositions!(entity)
-    remove_pronouns!(entity)
-    remove_stop_words!(entity)
+    remove_multi!(entity, :punctuation, :numbers, :articles, :indefinite_articles, :definite_articles, :prepositions, :pronouns, :stop_words)
+    #remove_punctuation!(entity)
+    #remove_numbers!(entity)
+    #remove_articles!(entity)
+    #remove_indefinite_articles!(entity)
+    #remove_definite_articles!(entity)
+    #remove_prepositions!(entity)
+    #remove_pronouns!(entity)
+    #remove_stop_words!(entity)
     entity
 end
 
@@ -88,7 +89,7 @@ openable(path::File) = path
 openable(path::String) = beginswith(path, "hdfs") ? HdfsURL(path) : File(path)
 
 as_serialized(obj, f::File) = as_serialized(obj, f.path)
-function as_serialized(obj, path)
+function as_serialized(obj, path::Union(String,HdfsURL))
     io = open(path, "w")
     serialize(io, obj)
     close(io)
@@ -125,7 +126,7 @@ end
 
 function search_index(terms::String)
     sd = StringDocument(terms)
-    as_preprocessed(sd)
+    preprocess(sd)
     terms = tokens(sd)
     terms = filter(tok->!isempty(tok), terms)
     master_idx = @cached_get(part_idx_location, :(Block(openable(part_idx_location), false, 2)))
@@ -147,16 +148,10 @@ end
 ##
 # Indexing
 #####################################################
-next_idx_id = 0
 function create_part_index(files)
-    crps = as_corpus(files)
-    crps = as_preprocessed(crps)
-    inv_idx = as_inverted_index(crps)
-
-    global next_idx_id
-    next_idx_id += 1
-    path = joinpath(part_idx_location, string(myid(), '_', next_idx_id, ".jser"))
-    as_serialized(inv_idx, openable(path))
+    crps = corpus(files)
+    crps = preprocess(crps)
+    as_inverted_index(crps)
 end
 
 function create_index()
@@ -164,8 +159,10 @@ function create_index()
     num_parts = @parallel (+) for i in 1:nworkers()
         file_lists = localpart(blks)
         np = 0
-        for files in file_lists
-            create_part_index(files)
+        for (idx, file_list) in enumerate(file_lists)
+            part_idx = create_part_index(file_list)
+            path = joinpath(part_idx_location, "$(i)_$(idx).jser")
+            as_serialized(part_idx, openable(path))
             np += 1
         end
         np
