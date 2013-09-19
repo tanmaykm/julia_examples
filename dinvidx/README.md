@@ -19,4 +19,5 @@ This gives a very simple distributed index. To improve one can come up with stra
 - pruning deleted documents
 - compacting indices
 
+A python equivalent using NLTK is also present for comparison purposes.
 

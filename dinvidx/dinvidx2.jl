@@ -101,9 +101,10 @@ openable(path::String) = beginswith(path, "hdfs") ? HdfsURL(path) : File(path)
 
 as_serialized(obj, f::File) = as_serialized(obj, f.path)
 function as_serialized(obj, path::Union(String,HdfsURL))
-    io = open(path, "w")
     iob = IOBuffer()
     serialize(iob, obj)
+
+    io = open(path, "w")
     write(io, takebuf_array(iob))
     close(io)
     close(iob)
