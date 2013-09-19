@@ -1,4 +1,5 @@
 using TextAnalysis
+using Stemmers
 using Blocks
 using HDFS
 using Base.FS
@@ -26,12 +27,11 @@ const _cache = Dict()
 cache(k, v) = _cache[k] = v
 cache_clear(k) = delete!(_cacle, k)
 cache_clear() = empty!(_cache)
-macro cached_get(k, expr)
+function cached_get(k, fn)
     v = get(_cache, k, nothing)
     (nothing != v) && return v
-    cache(k, eval(expr))
+    cache(k, fn())
 end
-
 
 function corpus(pathlist::Array)
     sdlist = {}
@@ -48,22 +48,32 @@ function corpus(pathlist::Array)
 end
 
 function preprocess(entity::Union(StringDocument,Corpus))
-    remove_corrupt_utf8!(entity)
-    remove_case!(entity)
-    remove_multi!(entity, :punctuation, :numbers, :articles, :indefinite_articles, :definite_articles, :prepositions, :pronouns, :stop_words)
-    #remove_punctuation!(entity)
-    #remove_numbers!(entity)
+    prepare!(entity, strip_corrupt_utf8 | strip_case | strip_whitespace | strip_non_letters | strip_articles | strip_prepositions | strip_pronouns | strip_stopwords)
+
+    #remove_corrupt_utf8!(entity)
+    #remove_case!(entity)
+    #remove_whitespace!(entity)
+    #remove_nonletters!(entity)
+    ##remove_multi!(entity, :punctuation, :numbers, :articles, :indefinite_articles, :definite_articles, :prepositions, :pronouns, :stop_words)
+    ##remove_punctuation!(entity)
+    ##remove_numbers!(entity)
     #remove_articles!(entity)
-    #remove_indefinite_articles!(entity)
-    #remove_definite_articles!(entity)
+    ##remove_indefinite_articles!(entity)
+    ##remove_definite_articles!(entity)
     #remove_prepositions!(entity)
     #remove_pronouns!(entity)
     #remove_stop_words!(entity)
+    if isa(entity, Corpus) 
+        standardize!(entity, TokenDocument) 
+    else
+        entity = convert(TokenDocument, entity)
+    end
+    stem!(entity)
     entity
 end
 
 function as_inverted_index(crps::Corpus)
-    doc_to_id = @cached_get(doc_to_id_location, :(as_deserialized(openable(doc_to_id_location))))
+    doc_to_id = cached_get(doc_to_id_location, ()->as_deserialized(openable(doc_to_id_location)))
 
     cdocs = documents(crps)
 
@@ -91,8 +101,11 @@ openable(path::String) = beginswith(path, "hdfs") ? HdfsURL(path) : File(path)
 as_serialized(obj, f::File) = as_serialized(obj, f.path)
 function as_serialized(obj, path::Union(String,HdfsURL))
     io = open(path, "w")
-    serialize(io, obj)
+    iob = IOBuffer()
+    serialize(iob, obj)
+    write(io, takebuf_array(iob))
     close(io)
+    close(iob)
     path
 end
 
@@ -115,8 +128,8 @@ end
 # Searching
 ##########################################################
 
-function search_part_idx(part_idx_name, terms::Array)
-    part_idx = @cached_get(part_idx_name, :(as_deserialized(part_idx_name)))
+function search_part_idx(file, terms::Array)
+    part_idx = cached_get(file, ()->as_deserialized(file))
     results = IntSet()
     for term in terms
         union!(results, get(part_idx, term, []))
@@ -126,10 +139,11 @@ end
 
 function search_index(terms::String)
     sd = StringDocument(terms)
-    preprocess(sd)
-    terms = tokens(sd)
+    td = preprocess(sd)
+    terms = tokens(td)
     terms = filter(tok->!isempty(tok), terms)
-    master_idx = @cached_get(part_idx_location, :(Block(openable(part_idx_location), false, 2)))
+
+    master_idx = cached_get(part_idx_location, ()->Block(openable(part_idx_location), false, 2))
 
     result_doc_ids = @parallel union for i in 1:nworkers()
         local_files = {}
@@ -140,7 +154,7 @@ function search_index(terms::String)
     end
   
     # map the document ids to file names 
-    id_to_doc = @cached_get(id_to_doc_location, :(as_deserialized(openable(id_to_doc_location))))
+    id_to_doc = cached_get(id_to_doc_location, ()->as_deserialized(openable(id_to_doc_location)))
     result_docs = map(id->get(id_to_doc, id, ""), result_doc_ids)
     filter(x->!isempty(x), result_docs)
 end
