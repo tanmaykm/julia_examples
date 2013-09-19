@@ -38,6 +38,7 @@ function corpus(pathlist::Array)
     for path in pathlist
         io = open(path)
         text = readall(io)
+        text = convert(ASCIIString, text.data, "")
         close(io)
         sd = StringDocument(text)
         sd.metadata = TextAnalysis.DocumentMetadata()
