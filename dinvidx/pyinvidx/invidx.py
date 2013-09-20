@@ -32,6 +32,12 @@ class Index:
         self.documents[docid] = docname
         return docid
 
+    def curr_docid(self):
+        return self.__next_docid
+
+    def set_curr_docid(self, docid):
+        self.__next_docid = docid
+
     def add(self, docname):
         docid = self.next_docid(docname)
         document = self.docreader(docname)

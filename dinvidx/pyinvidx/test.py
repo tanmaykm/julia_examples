@@ -1,4 +1,4 @@
-import nltk, os, pickle, time, sys
+import nltk, os, pickle, time, sys, glob
 
 from collections import defaultdict
 from nltk.stem.snowball import EnglishStemmer
@@ -8,6 +8,7 @@ from invidx import Index
 def read_as_string(filename):
     with open(filename, 'r') as content_file:
         content = content_file.read()
+        content = "".join(i for i in content if ord(i)<128)
     return content
 
 print(sys.argv)
@@ -15,34 +16,44 @@ print(sys.argv)
 if len(sys.argv) > 1:
     if sys.argv[1] == "index":
         time1 = time.time()   
-        index = Index(nltk.word_tokenize, read_as_string,
-                      EnglishStemmer(), 
-                      nltk.corpus.stopwords.words('english'))
+        begin_doc_id = 0
+        index_id = 1
 
-        for f in os.listdir("docs"):
-            index.add('docs/'+f)
+        index = Index(nltk.word_tokenize, read_as_string, EnglishStemmer(), nltk.corpus.stopwords.words('english'))
 
-        time2 = time.time()
-        with open("pyindex.pickle", 'w') as idx_file:
+        for root,subf,files in os.walk("docs"):
+            for f in files:
+                try:
+                    index.add(os.path.join(root,f))
+                except:
+                    print("error indexing file: " + os.path.join(root,f))
+
+                if index.curr_docid() >= (begin_doc_id+100):
+                    with open("pyindex"+str(index_id)+".pickle", 'w') as idx_file:
+                        pickle.dump(index, idx_file)
+                    index_id += 1
+                    begin_doc_id = index.curr_docid()
+                    index = Index(nltk.word_tokenize, read_as_string, EnglishStemmer(), nltk.corpus.stopwords.words('english'))
+                    index.set_curr_docid(begin_doc_id)
+
+        with open("pyindex"+str(index_id)+".pickle", 'w') as idx_file:
             pickle.dump(index, idx_file)
-        time3 = time.time()
+        time2 = time.time()
 
-        print("total time: %g secs. index time: %g secs." % ((time3-time1), (time2-time1)))
+        print("index time: %g secs." % ((time2-time1),))
+
     elif sys.argv[1] == "search":
-        with open("pyindex.pickle", 'r') as idx_file:
-            index = pickle.load(idx_file)
-        if len(sys.argv) > 2:
-            print(index.lookup(sys.argv[2]))
-        else:
-            test_words = nltk.word_tokenize(read_as_string("docs/w.txt"))
-            time4 = time.time()
-            for word in test_words:
-                index.lookup(word)
-            time5 = time.time()
-
-            nwords = len(test_words)
-            stime = time5-time4
-            print("search time: %g secs for %d words. average: %g secs." % (stime, nwords, stime/nwords))
+        idxfiles = glob.glob("pyindex*.pickle")
+        time4 = time.time()
+        res = []
+        for idxfile in idxfiles:
+            with open(idxfile, 'r') as idx_file:
+                index = pickle.load(idx_file)
+                res.extend(index.lookup(sys.argv[2]))
+        print(res)
+        time5 = time.time()
+        stime = time5-time4
+        print("search time: %g secs" % (stime,))
 else:
-    print("usage: python invidx.py <index|search>")
+    print("usage: python invidx.py <index|search term>")
 
