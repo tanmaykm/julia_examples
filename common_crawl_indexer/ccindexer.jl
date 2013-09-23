@@ -36,6 +36,9 @@ function assign_docids(crps::Corpus)
     doc_to_id
 end
 
+serialized_name(uniqid::String) = "$(uniqid).jser"
+part_name(uniqid::String, part::Int) = "$(uniqid)_$(part)"
+
 function as_inverted_index(crps::Corpus, doc_to_id::Dict)
     cdocs = documents(crps)
 
@@ -56,16 +59,17 @@ function as_inverted_index(crps::Corpus, doc_to_id::Dict)
 end
 
 index_id = 1
-function store_index(invidx::Dict, docids::Dict{String,Int})
+function store_index(invidx::Dict, docids::Dict{String,Int}, uniqid::String)
     global index_id
-    sername = "$(myid())_$(index_id).jser"
+    #sername = "$(myid())_$(index_id).jser"
+    sername = serialized_name(uniqid)
     index_id += 1
 
     path = joinpath(part_idx_location, sername)
     as_serialized(invidx, path)
 
-    path = joinpath(doc_to_id_location, sername)
-    as_serialized(docids, path)
+    #path = joinpath(doc_to_id_location, sername)
+    #as_serialized(docids, path)
 
     id_to_doc = Dict{Int,String}()
     for (k,v) in docids
@@ -75,12 +79,16 @@ function store_index(invidx::Dict, docids::Dict{String,Int})
     as_serialized(id_to_doc, path)
 end
 
-function create_index(docs::Array)
+function create_index(docs::Array, uniqid::String)
+    t1 = time()
     crps = Corpus(docs)
     crps = preprocess(crps)
     docids = assign_docids(crps)
     invidx = as_inverted_index(crps, docids)
-    store_index(invidx, docids)
+    println("\tprocessing time $(time()-t1)secs")
+    store_index(invidx, docids, uniqid)
+    t1 = time()
+    println("\tstoring time $(time()-t1)secs")
     empty!(docs)
 end
 
@@ -104,19 +112,31 @@ function read_doc(f::Union(GZipStream,IOStream), docs::Array)
     push!(docs, sd)
 end
 
-function create_index(ccpart_filename::String)
+function create_index(ccpart_filename::String, uniqid::String)
     f = GZip.open(joinpath(docs_location, ccpart_filename), "r")
     docs = {} #StringDocument[]
+    idx_part = 1
     while !eof(f)
         read_doc(f, docs)
-        (ndocs_per_idx_part > 0) && (length(docs) > ndocs_per_idx_part) && create_index(docs)
+        if (ndocs_per_idx_part > 0) && (length(docs) > ndocs_per_idx_part) 
+            create_index(docs, part_name(uniqid, idx_part))
+            idx_part += 1
+        end
     end
-    create_index(docs)
+    create_index(docs, part_name(uniqid, idx_part))
     close(f)
 end
 
 function create_index(s3Uri::URI)
     fname = basename(s3Uri.path)
+    uniqid = bytes2hex(AWS.Crypto.md5(s3Uri.path))
+
+    # check if archive is indexed already
+    if isfile(joinpath(part_idx_location, serialized_name(part_name(uniqid, 1))))
+        println("skipping $s3Uri already indexed as $(serialized_name(uniqid))")
+        return fname
+    end
+
     docsfile = joinpath(docs_location, fname)
     println("indexing $s3Uri. ($docsfile)")
     if !isfile(docsfile)
@@ -129,7 +149,7 @@ function create_index(s3Uri::URI)
         println("\tdownloaded in $(time()-t1)secs")
     end
     t1 = time()
-    create_index(fname)
+    create_index(fname, uniqid)
     println("\tindexed in $(time()-t1)secs")
     fname
 end
@@ -196,7 +216,9 @@ function create_index()
     # get the valid segments
     segments = cc_valid_segments(docs_location)
     println("fetched $(length(segments)) segments")
-    
+   
+    # Note: When using a large number of segments across a smaller number of machines, it may make sense to 
+    # parallelize over segment names or segment name + offsets rather than archive names
     segments = segments[1:2]
     println("working with $(length(segments)) segments")
     for segment in segments
