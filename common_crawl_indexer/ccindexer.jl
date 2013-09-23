@@ -3,6 +3,11 @@ using Stemmers
 using Blocks
 using HDFS
 using Base.FS
+using HTTPClient
+using AWS
+using AWS.S3
+using GZip
+
 
 ##
 # Configurable constants
@@ -29,7 +34,9 @@ end
 
 function assign_docids(crps::Corpus)
     ndocs = length(crps.documents)
-    docids = allocate_docids(ndocs)
+    #docids = allocate_docids(ndocs)
+    # allocate doc ids from one master processor
+    docids = remotecall_fetch(1, allocate_docids, ndocs)
 
     cdocs = documents(crps)
 
@@ -137,8 +144,8 @@ function read_doc(f::IOStream, docs::Array)
     push!(docs, sd)
 end
 
-function index(ccpart_filename::String)
-    f = open(joinpath(docs_location, ccpart_filename), "r")
+function create_index(ccpart_filename::String)
+    f = GZip.open(joinpath(docs_location, ccpart_filename), "r")
     docs = {} #StringDocument[]
     while !eof(f)
         read_doc(f, docs)
@@ -146,5 +153,79 @@ function index(ccpart_filename::String)
     end
     create_index(docs)
     close(f)
+end
+
+function create_index(s3Uri::URI)
+    fname = basename(s3Uri.path)
+    docsfile = joinpath(docs_location, fname)
+    if !isfile(docsfile)
+        println("downloading $docsfile")
+        os = open(docsfile, "w")
+        ho = HTTPClient.HTTPC.RequestOptions(ostream=os)
+        get(string(s3Uri), ho)
+        close(ho)
+    end
+    create_index(fname)
+    fname
+end
+
+function cc_valid_segments(docs_location)
+    file = joinpath(docs_location, "valid_segments.txt")
+    if !isfile(file)
+        os = open(file, "w")
+        ho = HTTPClient.HTTPC.RequestOptions(ostream=os)
+        get("http://aws-publicdatasets.s3.amazonaws.com/common-crawl/parse-output/valid_segments.txt", ho)
+        close(ho)
+    end
+    segments = String[]
+    open(file) do f
+        for str in redlines(f)
+            push!(segments, chomp(str))
+        end
+    end
+    segments
+end
+
+function cc_archives_in_segment(segment)
+    arcnames = URI[]
+    env = AWSEnv(timeout=60.0)
+    segname = string("common-crawl/parse-output/segment/", segment)
+    # TODO: use markers and fetch in chunks
+    resp = S3.get_bkt(env, "aws-publicdatasets", options=GetBucketOptions(prefix=segname, maxkeys=100000))
+    for elem in resp.obj.contents
+        if endswith(elem.key, ".arc.gz")
+            push!(arcnames, URI(string("http://aws-publicdatasets.s3.amazonaws.com", elem.key)))
+        end
+    end
+    arcnames
+end
+
+function create_index()
+    arcnames = URI[]
+
+    # get the valid segments
+    segments = cc_valid_segments(docs_location)
+    
+    segments = segments[1:2]
+    for segment in segments
+        arcs_in_seg = cc_archives_in_segment(segment)
+        append!(arcnames, arcs_in_seq)
+    end
+
+    function get_next_arc()
+        isempty(arcnames) && return nothing
+        pop!(arcnames)
+    end
+
+    arcnames = arcnames[1:3]
+    arcs_indexed = @parallel append! for arcs in arcnames
+        processed = String[]
+        for arc in arcnames
+            create_index(arc)
+            push!(processed, string(arc))
+        end
+        processed
+    end
+    println("Archives indexed: $(length(arcs_indexed))")
 end
 
