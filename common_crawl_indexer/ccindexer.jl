@@ -1,4 +1,5 @@
 using TextAnalysis
+using URIParser
 using Stemmers
 using Blocks
 using HDFS
@@ -8,21 +9,8 @@ using AWS
 using AWS.S3
 using GZip
 
-
-##
-# Configurable constants
-######################################################
-## constants while working in local file system mode
-const fs_pfx = ""
-## constants while working in HDFS mode
-#const fs_pfx = "hdfs://localhost:9000/dinvidx"
-
-const part_idx_location     = joinpath(fs_pfx, "part_idx")
-const doc_to_id_location    = joinpath(fs_pfx, "doc_to_id")
-const id_to_doc_location    = joinpath(fs_pfx, "id_to_doc")
-const docs_location         = joinpath(fs_pfx, "docs")
-
-const ndocs_per_idx_part    = 6000
+include("ccconsts.jl")
+include("ccutils.jl")
 
 _next_doc_id = 1
 function allocate_docids(n)
@@ -67,34 +55,6 @@ function as_inverted_index(crps::Corpus, doc_to_id::Dict)
     invidx
 end
 
-
-function preprocess(entity::Union(StringDocument,Corpus))
-    prepare!(entity, strip_corrupt_utf8 | strip_case)
-    prepare!(entity, strip_patterns, skip_patterns=Set{String}("<script\\b[^>]*>([\\s\\S]*?)</script>"))
-    prepare!(entity, strip_patterns, skip_patterns=Set{String}("<[^>]*>"))
-    prepare!(entity, strip_whitespace | strip_non_letters | strip_articles | strip_prepositions | strip_pronouns | strip_stopwords)
-
-    if isa(entity, Corpus)
-        standardize!(entity, TokenDocument)
-    else
-        entity = convert(TokenDocument, entity)
-    end
-    stem!(entity)
-    entity
-end
-
-as_serialized(obj, f::File) = as_serialized(obj, f.path)
-function as_serialized(obj, path::Union(String,HdfsURL))
-    iob = IOBuffer()
-    serialize(iob, obj)
-
-    io = open(path, "w")
-    write(io, takebuf_array(iob))
-    close(io)
-    close(iob)
-    path
-end
-
 index_id = 1
 function store_index(invidx::Dict, docids::Dict{String,Int})
     global index_id
@@ -124,7 +84,7 @@ function create_index(docs::Array)
     empty!(docs)
 end
 
-function read_doc(f::IOStream, docs::Array)
+function read_doc(f::Union(GZipStream,IOStream), docs::Array)
     l = readline(f)
     vs = split(l)
 
@@ -149,7 +109,7 @@ function create_index(ccpart_filename::String)
     docs = {} #StringDocument[]
     while !eof(f)
         read_doc(f, docs)
-        (length(docs) > ndocs_per_idx_part) && create_index(docs)
+        (ndocs_per_idx_part > 0) && (length(docs) > ndocs_per_idx_part) && create_index(docs)
     end
     create_index(docs)
     close(f)
@@ -158,28 +118,36 @@ end
 function create_index(s3Uri::URI)
     fname = basename(s3Uri.path)
     docsfile = joinpath(docs_location, fname)
+    println("indexing $s3Uri. ($docsfile)")
     if !isfile(docsfile)
-        println("downloading $docsfile")
+        println("\tdownloading $s3Uri to $docsfile")
+        t1 = time()
         os = open(docsfile, "w")
         ho = HTTPClient.HTTPC.RequestOptions(ostream=os)
         get(string(s3Uri), ho)
-        close(ho)
+        close(os)
+        println("\tdownloaded in $(time()-t1)secs")
     end
+    t1 = time()
     create_index(fname)
+    println("\tindexed in $(time()-t1)secs")
     fname
 end
 
 function cc_valid_segments(docs_location)
     file = joinpath(docs_location, "valid_segments.txt")
     if !isfile(file)
+        println("fetching valid segments...")
+        t1 = time()
         os = open(file, "w")
         ho = HTTPClient.HTTPC.RequestOptions(ostream=os)
         get("http://aws-publicdatasets.s3.amazonaws.com/common-crawl/parse-output/valid_segments.txt", ho)
-        close(ho)
+        close(os)
+        println("\tfetched in $(time()-t1)secs")
     end
     segments = String[]
     open(file) do f
-        for str in redlines(f)
+        for str in readlines(f)
             push!(segments, chomp(str))
         end
     end
@@ -187,14 +155,36 @@ function cc_valid_segments(docs_location)
 end
 
 function cc_archives_in_segment(segment)
+    file = joinpath(docs_location, string("segment_list_",segment,".txt"))
     arcnames = URI[]
-    env = AWSEnv(timeout=60.0)
-    segname = string("common-crawl/parse-output/segment/", segment)
-    # TODO: use markers and fetch in chunks
-    resp = S3.get_bkt(env, "aws-publicdatasets", options=GetBucketOptions(prefix=segname, maxkeys=100000))
-    for elem in resp.obj.contents
-        if endswith(elem.key, ".arc.gz")
-            push!(arcnames, URI(string("http://aws-publicdatasets.s3.amazonaws.com", elem.key)))
+    if !isfile(file)
+        println("listing segment $segment")
+        t1 = time()
+        env = AWSEnv(timeout=60.0)
+        segname = string("common-crawl/parse-output/segment/", segment)
+        os = open(file, "w")
+        opts = GetBucketOptions(prefix=segname)
+        while true
+            # TODO: use markers and fetch in chunks
+            resp = S3.get_bkt(env, "aws-publicdatasets", options=opts)
+            for elem in resp.obj.contents
+                if endswith(elem.key, ".arc.gz")
+                    uri_str = string("http://aws-publicdatasets.s3.amazonaws.com/", elem.key)
+                    push!(arcnames, URI(uri_str))
+                    println(os, uri_str)
+                end
+                opts.marker = elem.key
+            end
+            !resp.obj.isTruncated && break
+        end
+        close(os)
+        println("\tfetched in $(time()-t1)secs")
+    else
+        println("opening cached file [$(file)]")
+        open(file) do f
+            for str in readlines(f)
+                push!(arcnames, URI(chomp(str)))
+            end
         end
     end
     arcnames
@@ -205,11 +195,14 @@ function create_index()
 
     # get the valid segments
     segments = cc_valid_segments(docs_location)
+    println("fetched $(length(segments)) segments")
     
     segments = segments[1:2]
+    println("working with $(length(segments)) segments")
     for segment in segments
         arcs_in_seg = cc_archives_in_segment(segment)
-        append!(arcnames, arcs_in_seq)
+        append!(arcnames, arcs_in_seg)
+        println("fetched $(length(arcs_in_seg)) archive names for segment $(segment)")
     end
 
     function get_next_arc()
@@ -217,15 +210,13 @@ function create_index()
         pop!(arcnames)
     end
 
+    println("got $(length(arcnames)) archive names")
     arcnames = arcnames[1:3]
-    arcs_indexed = @parallel append! for arcs in arcnames
-        processed = String[]
-        for arc in arcnames
-            create_index(arc)
-            push!(processed, string(arc))
-        end
-        processed
+    println("working with $(length(arcnames)) archive names")
+    arcs_indexed = @parallel append! for arc in arcnames
+        create_index(arc)
+        [string(arc)]
     end
-    println("Archives indexed: $(length(arcs_indexed))")
+    println("archives indexed: $(length(arcs_indexed))")
 end
 
