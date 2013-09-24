@@ -5,12 +5,12 @@ using Blocks
 using HDFS
 using Base.FS
 using HTTPClient
-using AWS
-using AWS.S3
-using GZip
+using CommonCrawl
 
 include("ccconsts.jl")
 include("ccutils.jl")
+
+const cc = CrawlCorpus(docs_location, true)
 
 _next_doc_id = 1
 function allocate_docids(n)
@@ -20,31 +20,26 @@ function allocate_docids(n)
     docids
 end
 
-function assign_docids(crps::Corpus)
+function assign_unique_docids(crps::Corpus)
     ndocs = length(crps.documents)
-    #docids = allocate_docids(ndocs)
+
     # allocate doc ids from one master processor
     docids = remotecall_fetch(1, allocate_docids, ndocs)
 
     cdocs = documents(crps)
 
-    # assign doc ids
+    # create a lookup map
     doc_to_id = Dict{String,Int}()
+    id_to_doc = Dict{Int,String}()
     for docidx in 1:length(docids)
-        doc_to_id[cdocs[docidx].metadata.name] = docids[docidx]
+        d_id = docids[docidx]
+        d_name = cdocs[docidx].metadata.name
+
+        doc_to_id[d_name] = d_id
+        id_to_doc[d_id] = d_name
     end
-    doc_to_id
-end
 
-serialized_name(uniqid::String) = "$(uniqid).jser"
-part_name(uniqid::String, part::Int) = "$(uniqid)_$(part)"
-
-function as_inverted_index(crps::Corpus, doc_to_id::Dict)
-    cdocs = documents(crps)
-
-    update_inverse_index!(crps)
     invidx = inverse_index(crps)
-
     # update the doc ids in inverted index to global doc ids
     for (n,v) in invidx
         for docidx in 1:length(v)
@@ -55,194 +50,77 @@ function as_inverted_index(crps::Corpus, doc_to_id::Dict)
         end
     end
 
-    invidx
+    # return the id-to-doc map to be used during search
+    id_to_doc
 end
 
-index_id = 1
-function store_index(invidx::Dict, docids::Dict{String,Int}, uniqid::String)
-    global index_id
-    #sername = "$(myid())_$(index_id).jser"
-    sername = serialized_name(uniqid)
-    index_id += 1
-
+function store_index(invidx::Dict, id_to_doc::Dict{Int,String}, sername::String)
     path = joinpath(part_idx_location, sername)
     as_serialized(invidx, path)
 
-    #path = joinpath(doc_to_id_location, sername)
-    #as_serialized(docids, path)
-
-    id_to_doc = Dict{Int,String}()
-    for (k,v) in docids
-        id_to_doc[v] = k
-    end
     path = joinpath(id_to_doc_location, sername)
     as_serialized(id_to_doc, path)
 end
 
-function create_index(docs::Array, uniqid::String)
-    t1 = time()
-    crps = Corpus(docs)
-    crps = preprocess(crps)
-    docids = assign_docids(crps)
-    invidx = as_inverted_index(crps, docids)
-    println("\tprocessing time $(time()-t1)secs")
-    store_index(invidx, docids, uniqid)
-    t1 = time()
-    println("\tstoring time $(time()-t1)secs")
-    empty!(docs)
-end
+function index_archive_file(archive::URI)
+    fname = basename(archive.path)
+    # since we may end up encountering archive files files from different segments in the crawl corpus with possibly same name,
+    # create a unique id as hash of the complete URL. 
+    uniqid = bytes2hex(AWS.Crypto.md5(archive.path))
+    sername = "$(uniqid).jser"
 
-function read_doc(f::Union(GZipStream,IOStream), docs::Array)
-    l = readline(f)
-    while !eof(f) && isempty(l)
-        l = readline(f)
-    end
-    eof(f) && isempty(l) && return
-    vs = split(l)
-
-    url = vs[1]
-    mime = vs[4]
-    len = parseint(vs[5])
-    
-    if !beginswith(mime, "text/")
-        skip(f, len)
-        return
-    end
-    bytes = read(f, Array(Uint8, len))
-    ascstr = convert(ASCIIString, bytes, "")
-    sd = StringDocument(ascstr)
-    sd.metadata = TextAnalysis.DocumentMetadata()
-    sd.metadata.name = url
-    push!(docs, sd)
-    nothing
-end
-
-function create_index(ccpart_filename::String, uniqid::String)
-    f = GZip.open(joinpath(docs_location, ccpart_filename), "r")
-    docs = {} #StringDocument[]
-    idx_part = 1
-    while !eof(f)
-        read_doc(f, docs)
-        if (ndocs_per_idx_part > 0) && (length(docs) > ndocs_per_idx_part) 
-            create_index(docs, part_name(uniqid, idx_part))
-            idx_part += 1
-        end
-    end
-    create_index(docs, part_name(uniqid, idx_part))
-    close(f)
-end
-
-function create_index(s3Uri::URI)
-    fname = basename(s3Uri.path)
-    uniqid = bytes2hex(AWS.Crypto.md5(s3Uri.path))
-
-    # check if archive is indexed already
-    if isfile(joinpath(part_idx_location, serialized_name(part_name(uniqid, 1))))
-        println("skipping $s3Uri already indexed as $(serialized_name(uniqid))")
+    # restartability aid: check if archive is indexed already and not repeat it
+    if isfile(joinpath(part_idx_location, sername))
+        println("skipping $archive already indexed as $(sername)")
         return fname
     end
 
-    docsfile = joinpath(docs_location, fname)
-    println("indexing $s3Uri. ($docsfile)")
-    if !isfile(docsfile)
-        println("\tdownloading $s3Uri to $docsfile")
-        t1 = time()
-        os = open(docsfile, "w")
-        ho = HTTPClient.HTTPC.RequestOptions(ostream=os)
-        get(string(s3Uri), ho)
-        close(os)
-        println("\tdownloaded in $(time()-t1)secs")
-    end
     t1 = time()
-    create_index(fname, uniqid)
-    println("\tindexed in $(time()-t1)secs")
-    rm(docsfile)
+    # read all entries from the archive
+    f = open(cc, archive)
+    entries = read_entries(cc, f, "text/")
+    close(f)
+
+    # create a corpus of StringDocuments
+    docs = {}
+    for entry in entries
+        # ignoring anything otherthan ascii for this example
+        ascstr = convert(ASCIIString, entry.data, "")
+        sd = StringDocument(ascstr)
+        sd.metadata = TextAnalysis.DocumentMetadata()
+        sd.metadata.name = entry.uri
+        push!(docs, sd)
+    end
+    crps = Corpus(docs)
+
+    # process the corpus
+    crps = preprocess(crps)
+    update_inverse_index!(crps)
+    invidx = inverse_index(crps)
+
+    # in the corpus, doc ids are allocated starting from 1
+    # since we are processing in chunks, we need to make them unique across all runs and all processors
+    docids = assign_unique_docids(crps)
+    println("\tprocessing time $(time()-t1)secs")
+
+    t1 = time()
+    store_index(invidx, docids, sername)
+    println("\tstoring time $(time()-t1)secs")
+
+    # remove the archive file to save space. can be commented if disk space is not an issue
+    clear_cache(cc, archive)
     fname
 end
 
-function cc_valid_segments(docs_location)
-    file = joinpath(docs_location, "valid_segments.txt")
-    if !isfile(file)
-        println("fetching valid segments...")
-        t1 = time()
-        os = open(file, "w")
-        ho = HTTPClient.HTTPC.RequestOptions(ostream=os)
-        get("http://aws-publicdatasets.s3.amazonaws.com/common-crawl/parse-output/valid_segments.txt", ho)
-        close(os)
-        println("\tfetched in $(time()-t1)secs")
-    end
-    segments = String[]
-    open(file) do f
-        for str in readlines(f)
-            push!(segments, chomp(str))
-        end
-    end
-    segments
-end
 
-function cc_archives_in_segment(segment)
-    file = joinpath(docs_location, string("segment_list_",segment,".txt"))
-    arcnames = URI[]
-    if !isfile(file)
-        println("listing segment $segment")
-        t1 = time()
-        env = AWSEnv(timeout=60.0)
-        segname = string("common-crawl/parse-output/segment/", segment)
-        os = open(file, "w")
-        opts = GetBucketOptions(prefix=segname)
-        while true
-            # TODO: use markers and fetch in chunks
-            resp = S3.get_bkt(env, "aws-publicdatasets", options=opts)
-            for elem in resp.obj.contents
-                if endswith(elem.key, ".arc.gz")
-                    uri_str = string("http://aws-publicdatasets.s3.amazonaws.com/", elem.key)
-                    push!(arcnames, URI(uri_str))
-                    println(os, uri_str)
-                end
-                opts.marker = elem.key
-            end
-            !resp.obj.isTruncated && break
-        end
-        close(os)
-        println("\tfetched in $(time()-t1)secs")
-    else
-        println("opening cached file [$(file)]")
-        open(file) do f
-            for str in readlines(f)
-                push!(arcnames, URI(chomp(str)))
-            end
-        end
-    end
-    arcnames
-end
+##
+# execute index creation parallely for n_archives archive files
+function create_index(n_archives::Int)
+    arc_file_uris = archives(cc, n_archives)
 
-function create_index()
-    arcnames = URI[]
-
-    # get the valid segments
-    segments = cc_valid_segments(docs_location)
-    println("fetched $(length(segments)) segments")
-   
-    # Note: When using a large number of segments across a smaller number of machines, it may make sense to 
-    # parallelize over segment names or segment name + offsets rather than archive names
-    segments = segments[1:process_nsegs]
-    println("working with $(length(segments)) segments")
-    for segment in segments
-        arcs_in_seg = cc_archives_in_segment(segment)
-        append!(arcnames, arcs_in_seg)
-        println("fetched $(length(arcs_in_seg)) archive names for segment $(segment)")
-    end
-
-    function get_next_arc()
-        isempty(arcnames) && return nothing
-        pop!(arcnames)
-    end
-
-    println("got $(length(arcnames)) archive names")
-    arcnames = arcnames[1:process_narcs]
-    println("working with $(length(arcnames)) archive names")
-    arcs_indexed = @parallel append! for arc in arcnames
-        create_index(arc)
+    println("working with $(length(arc_file_uris)) archive files")
+    arcs_indexed = @parallel append! for arc in arc_file_uris
+        index_archive_file(arc)
         [string(arc)]
     end
     println("archives indexed: $(length(arcs_indexed))")

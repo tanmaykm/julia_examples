@@ -12,4 +12,4 @@ for idx in 1:nworkers_per_node
 end
 
 require("ccindexer.jl")
-@time create_index()
+@time create_index(2040)
