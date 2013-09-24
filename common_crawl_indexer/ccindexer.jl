@@ -94,6 +94,10 @@ end
 
 function read_doc(f::Union(GZipStream,IOStream), docs::Array)
     l = readline(f)
+    while !eof(f) && isempty(l)
+        l = readline(f)
+    end
+    eof(f) && isempty(l) && return
     vs = split(l)
 
     url = vs[1]
@@ -110,6 +114,7 @@ function read_doc(f::Union(GZipStream,IOStream), docs::Array)
     sd.metadata = TextAnalysis.DocumentMetadata()
     sd.metadata.name = url
     push!(docs, sd)
+    nothing
 end
 
 function create_index(ccpart_filename::String, uniqid::String)
