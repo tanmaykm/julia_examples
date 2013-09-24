@@ -156,6 +156,7 @@ function create_index(s3Uri::URI)
     t1 = time()
     create_index(fname, uniqid)
     println("\tindexed in $(time()-t1)secs")
+    rm(docsfile)
     fname
 end
 
@@ -224,7 +225,7 @@ function create_index()
    
     # Note: When using a large number of segments across a smaller number of machines, it may make sense to 
     # parallelize over segment names or segment name + offsets rather than archive names
-    segments = segments[1:2]
+    segments = segments[1:process_nsegs]
     println("working with $(length(segments)) segments")
     for segment in segments
         arcs_in_seg = cc_archives_in_segment(segment)
@@ -238,7 +239,7 @@ function create_index()
     end
 
     println("got $(length(arcnames)) archive names")
-    arcnames = arcnames[1:3]
+    arcnames = arcnames[1:process_narcs]
     println("working with $(length(arcnames)) archive names")
     arcs_indexed = @parallel append! for arc in arcnames
         create_index(arc)
@@ -246,4 +247,5 @@ function create_index()
     end
     println("archives indexed: $(length(arcs_indexed))")
 end
+
 
