@@ -58,9 +58,16 @@ if (nworkers() != length(instances))
 end
 
 println("Setting up work folders on all instances...")
-
-@everywhere run(`sudo \rm -rf /mnt/cc`)
-@everywhere run(`sudo mkdir -p /mnt/cc/part_idx /mnt/cc/id_to_doc /mnt/cc/doc_to_id /mnt/cc/docs`)
-@everywhere run(`sudo chmod 777 /mnt/cc /mnt/cc/part_idx /mnt/cc/id_to_doc /mnt/cc/doc_to_id /mnt/cc/docs`)
+@sync begin
+    for pid in workers()
+        @async begin
+            remotecall_fetch(pid, () -> begin
+                run(`sudo \rm -rf /mnt/cc`)
+                run(`sudo mkdir -p /mnt/cc/part_idx /mnt/cc/id_to_doc /mnt/cc/doc_to_id /mnt/cc/docs`)
+                run(`sudo chmod 777 /mnt/cc /mnt/cc/part_idx /mnt/cc/id_to_doc /mnt/cc/doc_to_id /mnt/cc/docs`)
+            end)
+        end
+    end
+end
 
 println("DONE!")
