@@ -11,7 +11,25 @@ println("Launching $cc_instnum with cluster name $uname")
 instances = AWS.EC2.ec2_launch(cc_ami, cc_sshkey, insttype=cc_insttype, n=cc_instnum, uname=uname, instname="CommonCrawl")
 
 # EC2 takes some time to propagate the DNS names and routes after launching the instances, hence the sleep.
-sleep(2.0)
+#sleep(2.0)
+
+hosts = AWS.EC2.ec2_hostnames(instances)
+while true
+    try
+        for h in hosts
+            if cc_driver_on_ec2
+                s=connect(h[3], 22)
+            else
+                s=connect(h[2], 22)
+            end
+            close(s)
+        end
+        break;
+    catch
+        println("Connect to one of the newly started hosts failed. Trying again...")
+        sleep(1.0)
+    end
+end
 
 AWS.EC2.ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu", use_public_dnsname=!cc_driver_on_ec2)
 if (nworkers() != length(instances))
