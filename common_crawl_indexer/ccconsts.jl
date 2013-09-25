@@ -15,7 +15,7 @@ const id_to_doc_location    = joinpath(fs_pfx, "id_to_doc")
 const docs_location         = joinpath(fs_pfx, "docs")
 
 ## AWS constants
-const cc_ami = "ami-1b97c272"
+const cc_ami = "ami-1b97c272"   # If empty string or is not defined, the first AMI with a tag "used_by":"juclass" will be used
 const cc_sshkey = "juclass"
 const cc_sshkey_file = "/home/ubuntu/juclass.pem"
 const cc_insttype = "m1.large"
