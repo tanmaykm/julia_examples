@@ -3,8 +3,10 @@ if length(ARGS) < 2
     exit()
 end
 
-require("ccconsts.jl")
+# load ccsearcher on master node (also required for start_ec2_cluster_workers
+require("ccsearcher.jl")
 start_ec2_cluster_workers()
+# load ccsearcher on all other nodes
 require("ccsearcher.jl")
 
 cc_use_local_node ? addprocs(cc_instnumworkers) : nothing
