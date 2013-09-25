@@ -1,3 +1,6 @@
+using AWS
+using HDFS
+using Base.FS
 
 ##
 # Utility methods
