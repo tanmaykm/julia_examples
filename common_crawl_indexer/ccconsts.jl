@@ -11,3 +11,11 @@ const doc_to_id_location    = joinpath(fs_pfx, "doc_to_id")
 const id_to_doc_location    = joinpath(fs_pfx, "id_to_doc")
 const docs_location         = joinpath(fs_pfx, "docs")
 
+## AWS constants
+const cc_ami = "/mnt/cc"
+const cc_sshkey = "juclass"
+const cc_sshkey_file = "/home/ubuntu/juclass.pem"
+const cc_insttype = "m1.large"
+const cc_instnum = 2            # Number of EC2 instances        
+const cc_instnumworkers = 2     # Number of julia workers per instance
+

@@ -57,3 +57,28 @@ function as_serialized(obj, path::Union(String,HdfsURL))
     close(iob)
     path
 end
+
+function get_cluster_name()
+    if length(ARGS) < 1 
+        uname=ENV["USER"]
+        println("Setting cluster name as $(uname). To specify a different name use:\n\nUsage : julia program_file <cluster_name>")
+    else
+        uname=ARGS[1]
+    end
+end
+
+
+function start_ec2_cluster_workers()
+    uname = get_cluster_name()
+
+    # get instances associated with this owner
+    instances=AWS.EC2.ec2_instances_by_owner(uname)
+
+    # start required number of workers on each machine in a loop 
+    # since the default limit for an unauthenticated ssh connections is low
+    for idx in 1:cc_instnumworkers
+        ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu")
+    end
+
+    println("Started $(nworkers())")
+end
