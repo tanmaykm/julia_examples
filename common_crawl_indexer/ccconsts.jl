@@ -1,6 +1,9 @@
 ##
 # Configurable constants
 ######################################################
+if !isdefined(Main, :_consts_defined)
+const _consts_defined = true
+
 ## constants while working in local file system mode
 const fs_pfx = "/mnt/cc"
 ## constants while working in HDFS mode (not implemented yet)
@@ -21,5 +24,4 @@ const cc_instnumworkers = 2     # Number of julia workers per instance
 const cc_use_local_node = false # Set this to true, in case you want workers to be started on the local node too
 const cc_driver_on_ec2 = true     # Set this to false if you are running your main julia program from outside of EC2
 
-
-
+end

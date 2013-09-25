@@ -3,9 +3,9 @@ if length(ARGS) < 2
     exit()
 end
 
-require("ccindexer.jl")
-
+require("ccconsts.jl")
 start_ec2_cluster_workers()
+require("ccindexer.jl")
 
 cc_use_local_node ? addprocs(cc_instnumworkers) : nothing
 
