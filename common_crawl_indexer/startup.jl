@@ -10,19 +10,24 @@ include("ccutils.jl")
 uname = get_cluster_name()
 println("Launching $cc_instnum with cluster name $uname")
 
-println("Detecting AMI to use. Looking for AMIs tagged with key:value 'used_by':'juclass' ")
-response = AWS.EC2.DescribeImages(AWS.EC2.AWSEnv(), filterSet=[AWS.EC2.FilterType(name="tag:used_by", valueSet=["juclass"])])
+if !defined(Main, cc_ami) || (cc_ami == "")
 
-images = response.obj
-if length(images.imageSet) > 0
-    cc_ami = images.imagesSet[1].imageId
-    println("Found $(length(images.imageSet)) images. Using $cc_ami")
+  println("Detecting AMI to use. Looking for AMIs tagged with key:value 'used_by':'juclass' ")
+  response = AWS.EC2.DescribeImages(AWS.EC2.AWSEnv(), filterSet=[AWS.EC2.FilterType(name="tag:used_by", valueSet=["juclass"])])
+
+  images = response.obj
+  if length(images.imageSet) > 0
+      ami_to_use = images.imagesSet[1].imageId
+      println("Found $(length(images.imageSet)) images. Using $ami_to_use")
+  else
+      println("AMI not specified. Exiting...")
+      exit()
+  end
 else
-    cc_ami = cc_default_ami
-    println("Using configured default AMI $cc_ami")
+  ami_to_use = cc_ami
 end
 
-instances = AWS.EC2.ec2_launch(cc_ami, cc_sshkey, insttype=cc_insttype, n=cc_instnum, uname=uname, instname="CommonCrawl")
+instances = AWS.EC2.ec2_launch(ami_to_use, cc_sshkey, insttype=cc_insttype, n=cc_instnum, uname=uname, instname="CommonCrawl")
 
 # EC2 takes some time to propagate the DNS names and routes after launching the instances, hence the sleep.
 #sleep(2.0)
