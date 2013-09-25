@@ -18,4 +18,6 @@ const cc_sshkey_file = "/home/ubuntu/juclass.pem"
 const cc_insttype = "m1.large"
 const cc_instnum = 2            # Number of EC2 instances        
 const cc_instnumworkers = 2     # Number of julia workers per instance
+const cc_use_local_node = false
+
 
