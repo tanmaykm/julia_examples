@@ -1,6 +1,3 @@
-using AWS
-using HDFS
-
 include("ccconsts.jl")
 include("ccutils.jl")
 
