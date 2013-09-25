@@ -1,10 +1,11 @@
-include("ccconsts.jl")
-include("ccutils.jl")
-
 if length(ARGS) < 1
     println("Usage: julia runindexer.jl <clustername>")
     exit()
 end
+
+include("ccconsts.jl")
+include("ccutils.jl")
+
 
 uname = get_cluster_name()
 println("Launching $cc_instnum with cluster name $uname")
