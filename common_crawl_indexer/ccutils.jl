@@ -84,7 +84,7 @@ function start_ec2_cluster_workers(uname=get_cluster_name())
     # start required number of workers on each machine in a loop 
     # since the default limit for an unauthenticated ssh connections is low
     for idx in 1:cc_instnumworkers
-        AWS.EC2.ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu", use_public_dnsname=cc_driver_on_ec2)
+        AWS.EC2.ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu", use_public_dnsname=!cc_driver_on_ec2)
     end
 
     println("Started $(nworkers())")
