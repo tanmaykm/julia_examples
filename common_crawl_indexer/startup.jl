@@ -1,8 +1,10 @@
-using AWS
-using HDFS
-
 include("ccconsts.jl")
 include("ccutils.jl")
+
+if length(ARGS) < 1
+    println("Usage: julia runindexer.jl <clustername>")
+    exit()
+end
 
 uname = get_cluster_name()
 println("Launching $cc_instnum with cluster name $uname")
