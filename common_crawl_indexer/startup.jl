@@ -51,7 +51,7 @@ while true
     end
 end
 
-AWS.EC2.ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu", tunnel=!cc_driver_on_ec2, use_public_dnsname=!cc_driver_on_ec2)
+AWS.EC2.ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu", dir=cc_julia_dir, tunnel=!cc_driver_on_ec2, use_public_dnsname=!cc_driver_on_ec2)
 if (nworkers() != length(instances))
     error("Problem starting required EC2 instances, Exiting...")
     exit()
