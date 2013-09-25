@@ -1,10 +1,3 @@
-using TextAnalysis
-using URIParser
-using Stemmers
-using Blocks
-using HDFS
-using Base.FS
-
 include("ccconsts.jl")
 include("ccutils.jl")
 

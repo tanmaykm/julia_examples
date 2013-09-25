@@ -1,6 +1,11 @@
-using AWS
+using TextAnalysis
+using URIParser
+using Stemmers
+using Blocks
 using HDFS
 using Base.FS
+using HTTPClient
+using CommonCrawl
 
 ##
 # Utility methods
