@@ -1,4 +1,10 @@
+- Setup AWS credentials thus:
+- 
+- export AWS_ID=xxxxxxxx
+- export AWS_SECKEY=yyyyyyyyyyyyyyyyyy
 - Modify `ccconsts.jl` appropriately
+- 
+
 - Execute `julia startup.jl <clustername>` to start a cluster and setup the nodes for common crawl work
 - Execute `julia runindexer.jl <clustername> <num_archives_to_index>` to create the indexes. 
 - Execute `julia runsearcher.jl <clustername> "search terms as a string"` to search. 
