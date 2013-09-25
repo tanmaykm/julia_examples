@@ -68,8 +68,7 @@ function get_cluster_name()
 end
 
 
-function start_ec2_cluster_workers()
-    uname = get_cluster_name()
+function start_ec2_cluster_workers(uname=get_cluster_name())
 
     # get instances associated with this owner
     instances=AWS.EC2.ec2_instances_by_owner(uname)
