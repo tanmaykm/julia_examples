@@ -13,6 +13,7 @@ instances = AWS.EC2.ec2_launch(cc_ami, cc_sshkey, insttype=cc_insttype, n=cc_ins
 # EC2 takes some time to propagate the DNS names and routes after launching the instances, hence the sleep.
 #sleep(2.0)
 
+println("Testing TCP connects (on port 22) to all newly started hosts...")
 hosts = AWS.EC2.ec2_hostnames(instances)
 while true
     try
@@ -26,8 +27,8 @@ while true
         end
         break;
     catch
-        println("Connect to one of the newly started hosts failed. Trying again...")
-        sleep(1.0)
+        println("Newly started host unreachable. Trying again in 2.0 seconds.")
+        sleep(2.0)
     end
 end
 
