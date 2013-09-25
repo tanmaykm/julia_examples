@@ -23,5 +23,6 @@ const cc_instnum = 2            # Number of EC2 instances
 const cc_instnumworkers = 2     # Number of julia workers per instance
 const cc_use_local_node = false # Set this to true, in case you want workers to be started on the local node too
 const cc_driver_on_ec2 = true     # Set this to false if you are running your main julia program from outside of EC2
+const cc_julia_dir = "/usr/bin"         # Julia installed path on the nightlies installed EC2 AMIs
 
 end
