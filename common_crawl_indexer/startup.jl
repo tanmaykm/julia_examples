@@ -1,6 +1,6 @@
 using AWS
 
-include("ccconts.jl")
+include("ccconsts.jl")
 include("ccutils.jl")
 
 uname = get_cluster_name()
