@@ -10,5 +10,7 @@ end
 
 start_ec2_cluster_workers()
 
+cc_use_local_node ? addprocs(cc_instnumworkers) : nothing
+
 require("ccindexer.jl")
 @time create_index(int(ARGS[2]))
