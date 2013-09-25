@@ -10,7 +10,7 @@ uname = get_cluster_name()
 println("Launching $cc_instnum with cluster name $uname")
 instances = AWS.EC2.ec2_launch(cc_ami, cc_sshkey, insttype=cc_insttype, n=cc_instnum, uname=uname, instname="CommonCrawl")
 
-AWS.EC2.ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu")
+AWS.EC2.ec2_addprocs(instances, cc_sshkey_file; hostuser="ubuntu", use_public_dnsname=cc_driver_on_ec2)
 if (nworkers() != length(instances))
     error("Problem starting required EC2 instances, Exiting...")
     exit()
