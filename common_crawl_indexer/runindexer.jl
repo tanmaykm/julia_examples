@@ -1,15 +1,14 @@
-macs = split(readall("instances.txt"))
+using AWS
 
-nworkers_per_node = 24
+include("ccconts.jl")
+include("ccutils.jl")
 
-for idx in 1:length(macs)
-    macs[idx] = string("ubuntu@", macs[idx])
+if length(ARGS) < 2
+    println("Usage: julia runindexer.jl <clustername> <num_archives_to_index>")
+    exit()
 end
 
-for idx in 1:nworkers_per_node
-    addprocs(macs, sshflags=`-i /home/ubuntu/jublr.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no`)
-    println("num workers: $(nworkers())")
-end
+start_ec2_cluster_workers()
 
 require("ccindexer.jl")
-@time create_index(2040)
+@time create_index(int(ARGS[2]))

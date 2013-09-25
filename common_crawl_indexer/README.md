@@ -1,8 +1,8 @@
-- Start a cluster of machines on EC2 (preferably cc2.8xlarge)
-- Place the machine hostnames in file instances.txt
-- Modify `ccconsts.jl`, `setupfolders.jl` and `runindexer.jl` appropriately
-- Execute `julia setupfolders.jl` to create the work folders on all machines
-- Execute `julia runindexer.jl` to create the indexes
+- Modify `ccconsts.jl` appropriately
+- Execute `julia startup.jl <clustername>` to start a cluster and setup the nodes for common crawl work
+- Execute `julia runindexer.jl <clustername> <num_archives_to_index>` to create the indexes. 
+- Execute `julia runsearcher.jl <clustername> "search terms as a string"` to search. 
+- Execute `julia shutdown.jl <clustername>` to release all EC2 resources associated with this clustername.
 
 Note: 
 - searcher implementation is not yet complete
