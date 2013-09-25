@@ -5,7 +5,7 @@
 - In case cc_ami is not defined, or is an empty string, the first AMI with a tag key:value of "used_by":"juclass" is used.
 - Execute `julia startup.jl <clustername>` to start a cluster and setup the nodes for common crawl work
 - Execute `julia runindexer.jl <clustername> <num_archives_to_index>` to create the indexes. 
-- Execute `julia runsearcher.jl <clustername> "search terms as a string"` to search. 
+- Execute `julia runsearcher.jl <clustername> "search terms as a string"` to search. Not robust, incomplete currently.
 - Execute `julia shutdown.jl <clustername>` to release all EC2 resources associated with this clustername.
 
 
