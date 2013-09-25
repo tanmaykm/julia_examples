@@ -1,6 +1,7 @@
 using AWS
+using HDFS
 
-include("ccconts.jl")
+include("ccconsts.jl")
 include("ccutils.jl")
 
 if length(ARGS) < 2
