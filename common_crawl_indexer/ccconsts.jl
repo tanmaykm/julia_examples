@@ -19,5 +19,7 @@ const cc_insttype = "m1.large"
 const cc_instnum = 2            # Number of EC2 instances        
 const cc_instnumworkers = 2     # Number of julia workers per instance
 const cc_use_local_node = false
+const cc_driver_on_ec2 = true     # Set this to false if you are running your main julia program from outside of EC2
+
 
 
