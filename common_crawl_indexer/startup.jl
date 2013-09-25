@@ -10,15 +10,15 @@ include("ccutils.jl")
 uname = get_cluster_name()
 println("Launching $cc_instnum with cluster name $uname")
 
-if !defined(Main, cc_ami) || (cc_ami == "")
+if !isdefined(Main, :cc_ami) || (cc_ami == "")
 
   println("Detecting AMI to use. Looking for AMIs tagged with key:value 'used_by':'juclass' ")
   response = AWS.EC2.DescribeImages(AWS.EC2.AWSEnv(), filterSet=[AWS.EC2.FilterType(name="tag:used_by", valueSet=["juclass"])])
 
   images = response.obj
-  if length(images.imageSet) > 0
+  if length(images.imagesSet) > 0
       ami_to_use = images.imagesSet[1].imageId
-      println("Found $(length(images.imageSet)) images. Using $ami_to_use")
+      println("Found $(length(images.imagesSet)) images. Using $ami_to_use")
   else
       println("AMI not specified. Exiting...")
       exit()
