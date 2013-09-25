@@ -1,10 +1,11 @@
-include("ccconsts.jl")
-include("ccutils.jl")
 
 if length(ARGS) < 2
     println("Usage: julia runindexer.jl <clustername> <num_archives_to_index>")
     exit()
 end
+
+include("ccconsts.jl")
+include("ccutils.jl")
 
 start_ec2_cluster_workers()
 
