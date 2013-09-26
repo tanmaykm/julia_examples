@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>18.337/6.338 Parallel Computing - Fall 2013</title>
+		<link href="styles.css" rel="stylesheet" type="text/css" />
+		<link href="favicon.ico" rel="shortcut icon" />
+	</head>
+	<body>
+		<div id="main">
+			<div id="header">
+				<img id="banner" src="images/banner.jpg" alt="18.337/6.338 Parallel Computing - Fall 2013" />
+			</div>
+			<div id="nav">
+				<a href="index.html">Home</a>
+				<a href="news.html">News</a>
+				<a href="calendar.html">Course Calendar</a>
+				<a href="homework.html">Homework</a>
+				<a href="projects.html">Projects</a>
+				<a href="calendar.html">Lecture Slides</a>
+				<a href="lectreadings.html">Suggested Readings</a>
+				<a href="darwin.html">Darwin Cluster</a>
+				<a href="ec2.html">Amazon EC2</a>
+				<a href="http://docs.julialang.org/en/latest/manual">Julia Docs</a>
+				
+				<a href="previous.html">Previous Classes</a>
+			</div>
+			<div id="content">
+
+<h2> Homework 2 </h2>
+
+Given out 9/25/13, due 10/9/13.<br><br>
+<p>
+In this assignment you will use a cluster assembled with cloud services to analyze a
+large volume of data. We will give you part of the code for a text search system
+with two phases: first building an index, and then querying it. For test data we
+will use the <a href="https://commoncrawl.atlassian.net/wiki/display/CRWL/About+the+Data+Set">
+Common Crawl data set</a>, which consists of about 6 billion web documents
+stored in Amazon's Simple Storage Service (S3).
+
+<p>
+Our code uses several Julia packages:
+<a href="https://github.com/johnmyleswhite/TextAnalysis.jl">TextAnalysis</a>,
+<a href="https://github.com/tanmaykm/Blocks.jl">Blocks</a>,
+<a href="https://github.com/amitmurthy/AWS.jl">AWS</a>,
+<a href="https://github.com/amitmurthy/HTTPClient.jl">HTTPClient</a>,
+and <a href="https://github.com/kmsquire/GZip.jl">GZip</a>. There is also
+<a href="https://github.com/tanmaykm/CommonCrawl.jl">
+an interface specifically for the Common Crawl data set</a>. As such, this is a bit
+of a tour de force, but don't worry: you will not have to learn these libraries
+in detail. Rather the goal is to understand how the pieces fit together, and learn
+a bit about web-based computing infrastructure.
+
+<p>
+<h3>1. Exploring the data</h3>
+<p><br>
+
+Go to the <a href="http://beowulf.csail.mit.edu/18.337/ec2.html">EC2 management console</a>
+and create a "head node" for yourself from the AMI called <tt>HW2_18337</tt>.
+(Click on "AMIs" in the sidebar, then right click on <tt>HW2_18337</tt> and select
+"Launch"). We recommend using instance type <tt>m1.medium</tt> for the head node.
+Name this instance with your name.
+
+<p>
+Connect to your instance from a Unix machine using
+
+<p>
+<pre>
+ssh -i juclass.pem ubuntu@ADDRESS
+</pre>
+<br>
+
+where ADDRESS is the "Public DNS" entry in the instance information. On a non-unix
+machine, make sure <tt>juclass.pem</tt> is provided as your private key.
+
+<p><br>
+From there you will be able to run the rest of the commands described here.
+
+<p>
+Please "stop" your head node when you're not using it; your data will be saved.
+Remember that picking "terminate" will delete your data, so be careful.
+
+<p>
+All the code is in the directory <tt>HW2</tt> in the home directory (<tt>/home/ubuntu</tt>).
+
+<p>
+In julia (just run <tt>julia</tt>) the following commands yield an object for
+interacting with the data:
+
+<p>
+<pre>
+using CommonCrawl
+cc = CrawlCorpus("/mnt/cc",true)   # "true" supplies debug output
+</pre><br>
+
+A <tt>CrawlCorpus</tt> is constructed with a directory to use as cache space. Files
+will be downloaded automatically from S3 into this local cache as necessary, and from
+then on read directly from the cache. You are encouraged to glance at the code for
+<a href="https://github.com/tanmaykm/CommonCrawl.jl/blob/master/src/CommonCrawl.jl">
+CommonCrawl</a> to see how this works. It is basically just fetching URLs using
+<tt>HTTPClient</tt>, but the details are fiddly.
+
+<p><br>
+Since this data set is so large, it is divided first into "segments", each of which has
+a numeric identifier like <tt>"1346823845675"</tt>. Each segment contains many
+"archives", each of which has a URL like <tt>http://aws-publicdatasets.s3.amazonaws.com/common-crawl/parse-output/segment/1350433107106/1350520862923_5.arc.gz</tt>. The <tt>.gz</tt>
+extension indicates that the data is compressed. Each archive contains information
+about many web pages.
+
+<p>
+We can list segments and archives as follows:
+
+<p>
+<pre>
+segment_names = segments(cc)
+archive_uris = archives(cc, "1346823845675")
+</pre><br>
+
+You can also call <tt>archives(cc, n)</tt> to get the addresses of <tt>n</tt> archives,
+over all segments.
+
+<p>
+An archive provides a file-like interface:
+
+<p>
+<pre>
+arc = open(cc, archive_uris[1])
+</pre><br>
+
+gives you a handle that can be used to read entries:
+
+<p>
+<pre>
+entry = read_entry(cc, arc)
+</pre><br>
+
+A single entry has fields <tt>uri</tt> (the URI of the original web document),
+<tt>mime</tt> (the mime type of the data), and <tt>data</tt> (a byte array of raw data).
+If the data is ASCII or UTF-8 text, you can convert it to a string with
+<tt>bytestring(entry.data)</tt>.
+
+<p>
+<h3>2. Exploring the code</h3>
+<p><br>
+
+The overall strategy of our indexer is to have each node in the cluster process a
+subset of the archives we want to search. Each node stores the index files it
+generates to its local disk. To perform a search, each node loads its indexes
+and searches (a "map" process), then the results are combined (a "reduce" process) and
+presented to the user.
+
+<p>
+Most of the code for this assignment was developed by prolific Julia contributor
+Tanmay Mohapatra.
+The code consists of a few short files:
+
+<ul>
+<li><tt>ccconsts.jl</tt> imports the needed libraries and defines the file paths to use
+locally.
+<br><br>
+<li><tt>ccutils.jl</tt> defines <tt>as_serialized</tt>, which can save an arbitrary
+Julia object to disk, and <tt>as_deserialized</tt>, which reverses the process.
+There is also <tt>preprocess</tt>, which is <i>serial</i> code to invoke many
+text cleaning passes on the data to make it easier to analyze.
+<br><br>
+<li><tt>ccindexer.jl</tt> generates indexes of crawl data. <tt>archive_to_index</tt>
+accepts a single archive URI and returns an "inverse index", which maps words to
+lists of documents containing them. The code is serial, and runs on a single node.
+You will add parallelism in <tt>create_index</tt>, which creates indexes for many
+archives. As the indexes are generated, they should be written to local disk.
+<br><br>
+<li><tt>ccsearcher.jl</tt> implements searching. <tt>search_part_idx</tt> searches
+for query terms in a <i>single part</i> of the index. <tt>search_index</tt> does
+this in parallel and combines results. Each node should operate on its local
+index data.
+</ul>
+<br>
+
+<p>
+The index returned by <tt>archive_to_index</tt> internally maps words to lists of
+integer document IDs. However, these document IDs are not globally unique and only
+make sense within a single index. Therefore we also include an array of document
+names (URLs) that can be used to map indexes back to names. The names are globally
+unique. Be sure to return document names from <tt>search_part_idx</tt>.
+
+<p>
+The function <tt>get(index, term, default)</tt> is used to look up a list of document
+IDs given a term. The Julia type <tt>IntSet</tt> is useful for manipulating sets
+of integers.
+
+<p>
+<tt>search_part_idx</tt> should accept an optional third argument <tt>"and"</tt> or
+<tt>"or"</tt>, specifying how multiple search terms should be combined.
+
+<p>
+If you want to try parts of the code, include <tt>hw2.jl</tt> interactively,
+which will load the other needed files.
+
+<p>
+For convenience, you can also browse the code here:
+<br>
+<a href="HW2/ccconsts.jl">ccconsts.jl</a><br>
+<a href="HW2/ccindexer.jl">ccindexer.jl</a><br>
+<a href="HW2/ccsearcher.jl">ccsearcher.jl</a><br>
+<a href="HW2/ccutils.jl">ccutils.jl</a><br>
+
+<p>
+Utility scripts:
+<br>
+<a href="HW2/startup.jl">startup.jl</a><br>
+<a href="HW2/shutdown.jl">shutdown.jl</a><br>
+<a href="HW2/runindexer.jl">runindexer.jl</a><br>
+<a href="HW2/runsearcher.jl">runsearcher.jl</a><br>
+
+
+<p>
+<h3>3. What to do</h3>
+<p><br>
+
+Read through all the code (it is less than 200 lines). Read the comments especially
+carefully.
+
+<p>
+Write the code to parallelize indexing in <tt>ccindexer.jl</tt>.
+
+<p>
+Implement the logic for searching for multiple terms in <tt>search_part_index</tt>
+in <tt>ccsearcher.jl</tt>.
+
+<p>
+Implement parallel searching in <tt>search_index</tt> in <tt>ccsearcher.jl</tt>.
+
+<p>
+We recommend developing on one machine (your head node or local machine)
+and testing interactively.
+Calling <tt>create_index(n)</tt> should create an index
+of <tt>n</tt> archives, and <tt>search_index("some&nbsp;words",&nbsp;"and")</tt> will perform a search.
+
+<p>
+When you're done, move to the next section.
+
+
+<p>
+<h3>4. Scaling up</h3>
+<p><br>
+
+You can edit <tt>HW2/ccconsts.jl</tt> to set the instance type to use, and the number
+of instances and number of workers per instance. All the other constants can be left
+alone.
+
+<p>
+To start the cluster described by <tt>HW2/ccconsts.jl</tt>, run the shell command
+(in the HW2 directory)
+
+<p>
+<pre>
+julia ./startup.jl YOURNAME
+</pre><br>
+
+substituting your name, which will be used to identify your cluster. This will take
+a couple minutes, and you will see messages as the script waits to try to connect
+to your instances.
+
+<p><br>
+When you're done with your cluster, run
+
+<p>
+<pre>
+julia ./shutdown.jl YOURNAME
+</pre><br>
+
+<p>
+To do a large indexing job, we provide a <tt>runindexer.jl</tt> script:
+
+<p>
+<pre>
+julia runindexer.jl YOURNAME NUM_ARCHIVES
+</pre>
+<br>
+
+This connects to the named cluster and runs your code in parallel.
+
+<p>
+Use the following command to search:
+
+<p>
+<pre>
+julia runsearcher.jl YOURNAME "search terms"
+</pre><br>
+
+<p>
+Submit your code along with some example searches. Also provide the number of
+processes you ran, the number of archives indexed, and the time taken to do so.
+
+<p>
+<h3>5. Credits</h3>
+<p><br>
+
+This homework would not have been possible without:
+
+<p>
+Tanmay Mohapatra - Blocks, CommonCrawl
+
+<p>
+Amit Murthy - AWS library, HTTPClient
+
+<p>
+John Myles White - TextAnalysis (and much, much more)
+
+<p>
+Kevin Squire - GZip
+
+<p>
+and many others.
+
+			</div>
+			<div class="clear"> </div>
+			<div id="footer">
+				<div class="footer-section">
+					<div class="footer-heading">Instructor</div>
+					<div class="footer-line">Prof. Alan Edelman</div>
+					<div class="footer-line"><a href="mailto:edelman@math.mit.edu">edelman@math.mit.edu</a></div>
+					<div class="footer-line">2-343, x3-7770</div>
+				</div>
+				<div class="footer-section">
+					<div class="footer-heading">TA</div>
+					<div class="footer-line">Jeff Bezanson</div>
+					<div class="footer-line"><a href="mailto:bezanson@mit.edu">bezanson@mit.edu</a></div>
+				</div>
+				<div class="clear"> </div>
+				<div id="last-modified">Last Modified on 25 September 2013.</div>
+				<div id="credit">Designed by Stephan Boyer</div>
+			</div>
+		</div>
+	</body>
+</html>
