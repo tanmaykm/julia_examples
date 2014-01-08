@@ -1,6 +1,6 @@
 using TextAnalysis
 using URIParser
-using Stemmers
+#using Stemmers
 using Blocks
 using HDFS
 using Base.FS
