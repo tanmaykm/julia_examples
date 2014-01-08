@@ -1,7 +1,5 @@
-julia_examples
+Julia Examples
 ==============
 
-Examples using Julia
-
 - [A simple distributed inverse index for search](https://github.com/tanmaykm/julia_examples/tree/master/dinvidx)
--
+- [Distributed statistics collection and indexing of the Common Crawl Dataset](https://github.com/tanmaykm/julia_examples/tree/master/common_crawl_indexer)
