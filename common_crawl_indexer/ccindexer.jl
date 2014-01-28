@@ -53,6 +53,15 @@ function store_index(invidx::Dict, id_to_doc::Dict{Int,String}, sername::String)
     as_serialized(id_to_doc, path)
 end
 
+function mkstr(ascdata::Array{Uint8,1})
+    const l::Int = length(ascdata)
+    for i in 1:l
+        (ascdata[i] >= 0x80) && (ascdata[i] = ' ')
+    end
+    MutableASCIIString(ascdata)
+    #UTF8String(ascdata)
+end
+
 function index_archive_file(archive::URI)
     fname = basename(archive.path)
     # since we may end up encountering archive files files from different segments in the crawl corpus with possibly same name,
@@ -71,21 +80,24 @@ function index_archive_file(archive::URI)
     f = open(cc, archive)
     entries = read_entries(cc, f, "text/")
     close(f)
+    println("\t\tentry created at $(time()-t1)secs")
 
     # create a corpus of StringDocuments
-    docs = {}
+    docs = GenericDocument[]
     for entry in entries
         # ignoring anything otherthan ascii for this example
-        ascstr = convert(ASCIIString, entry.data, "")
+        ascstr = mkstr(entry.data)
         sd = StringDocument(ascstr)
         sd.metadata = TextAnalysis.DocumentMetadata()
         sd.metadata.name = entry.uri
         push!(docs, sd)
     end
     crps = Corpus(docs)
+    println("\t\tcorpus created at $(time()-t1)secs")
 
     # process the corpus
-    crps = preprocess(crps)
+    crps = preprocess(crps)A
+    println("\t\tpreprocessed at $(time()-t1)secs")
     update_inverse_index!(crps)
     invidx = inverse_index(crps)
 

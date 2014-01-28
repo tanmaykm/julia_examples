@@ -40,17 +40,17 @@ function as_deserialized(path::Union(String,HdfsURL))
 end
 
 function preprocess(entity::Union(StringDocument,Corpus))
-    prepare!(entity, strip_corrupt_utf8 | strip_case)
-    prepare!(entity, strip_patterns, skip_patterns=Set{String}("<script\\b[^>]*>([\\s\\S]*?)</script>"))
-    prepare!(entity, strip_patterns, skip_patterns=Set{String}("<[^>]*>"))
+    #prepare!(entity, strip_corrupt_utf8 | strip_case)
+    prepare!(entity, strip_case)
+    remove_html_tags!(entity)
     prepare!(entity, strip_whitespace | strip_non_letters | strip_articles | strip_prepositions | strip_pronouns | strip_stopwords)
+    stem!(entity)
 
     if isa(entity, Corpus)
         standardize!(entity, TokenDocument)
     else
         entity = convert(TokenDocument, entity)
     end
-    stem!(entity)
     entity
 end
 
